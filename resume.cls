@@ -26,7 +26,8 @@
 ]{texgyretermes}
 
 \RequirePackage[
-	a4paper,
+	paperwidth=210mm,
+	paperheight=1500mm,
 	left=0.7in,
 	right=0.7in,
 	top=0.50in,
