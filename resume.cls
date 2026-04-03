@@ -26,13 +26,44 @@
 ]{texgyretermes}
 
 \RequirePackage[
-	a4paper,
+	paperwidth=210mm,
+	paperheight=999mm,
 	left=0.7in,
 	right=0.7in,
 	top=0.50in,
 	bottom=0.5in,
 	nohead
 ]{geometry}
+
+% Auto-fit page height to content (single page output)
+% Use two-pass approach: write content height to .aux, read it on next compile
+\newlength{\savedContentHeight}
+\setlength{\savedContentHeight}{0pt}
+
+% Read saved height from previous compile (if available)
+\AtBeginDocument{%
+  \ifdefined\resumeContentHeight
+    \setlength{\savedContentHeight}{\resumeContentHeight}%
+    \addtolength{\savedContentHeight}{1.0in}% top + bottom margins
+    \newgeometry{
+      paperwidth=210mm,
+      paperheight=\savedContentHeight,
+      left=0.7in,
+      right=0.7in,
+      top=0.50in,
+      bottom=0.5in,
+      nohead
+    }%
+    \pdfpageheight=\savedContentHeight
+  \fi
+}
+
+% Save current content height to .aux for next compile
+\AtEndDocument{%
+  \immediate\write\@auxout{%
+    \string\gdef\string\resumeContentHeight{\the\pagetotal}%
+  }%
+}
 
 \RequirePackage{titlesec}
 \RequirePackage{enumitem}
