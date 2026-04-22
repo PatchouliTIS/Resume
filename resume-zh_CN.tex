@@ -32,38 +32,28 @@
 
 \datedsubsection{\textbf{腾讯} | TEG 混元机器学习平台, 推理引擎工程师}{2025.06 - 2026.04}
 \begin{itemize}
-  \item \textbf{INT8 Blockwise W8A8 量化推理优化}（专利成果）：针对 Ampere 硬件上 INT8 量化算子频繁执行数值转换影响算子性能的痛点，提出 INT8 Hybrid 两级 Scale 量化方案，将 FP32 scale 二次分解为 (Q\_int32, F\_fp32) 以实现 K-Tile 维度上连续 IMMA INT32 累加；在此基础上通过 CUTLASS 实现 CTA Swizzle 优化以及手动交替编排 k-Tile mainloop 内的 ldmatrix 与 IMMA 算子等方式，\textbf{将 Tensor Core 利用率从 Triton 基础实现的 48\% 提升至 65\%}，在多种 workload 下\textbf{算子端到端时延降低 1.23x ~ 1.47x}； 算子整合进 vLLM 框架后，编写 Triton Kernel 将激活在线量化的多步算子垂直融合成单算子，在 Qwen3-8B 模型上进行测试，\textbf{端到端 QPS 相比 BF16 推理有 1.67x ~ 2.24x 的提升}。
-  \item \textbf{Async N-gram GPU 投机解码}（PR \#29184 合入 vLLM 主线）：针对社区反馈以及业务场景中，高并发任务中 N-gram 负优化的问题，将 N-gram Proposer 完全迁移至 GPU，利用 Torch GPU 向量化操作将原始的 CPU O(N) 查找代价优化为使用滑动窗口的 O(1) 并行匹配，结合编译优化进一步压缩 N-gram 算子的性能；实现异步 D2H、Pinned Memory 复用、独立 CUDA Stream 等零同步设计，\textbf{H20 上 64~512并发吞吐提升 20\%\~{}39\%}。
-  \item \textbf{Penalty-Aware Speculative Decoding}：为 vLLM 框架的 speculative decoding（rejection sampler）实现并集成 logit processors，修复了 bad\_words、frequency/presence penalties 和 allowed\_token\_ids 在预测采样路径被忽略的问题，\textbf{保证了在各种统计解码场景下的生成约束正确性}；针对多 draft tokens 设计并行采样机制，在 Triton kernel 中以 BLOCK\_SIZE 粒度向量化匹配 vocab ID，修正多 draft token 并行采样时的 frequency/presence penalty 计算错误。
-  \item \textbf{DivPrune 视觉 Token 剪枝}：针对多模态模型处理视频等流媒体时，encoder 阶段 vision token 过多的问题，基于 vLLM 框架在 Qwen3-VL 中设计并实现基于最远点采样（Farthest-Point Sampling）的特征多样性剪枝方法，采用批量并行选取（parallel\_k=32）+ mRoPE 3D 位置编码附加方案，实现 EVS/DivPrune/关闭三种模式的无缝切换，保持完全向后兼容，\textbf{在 Qwen3-VL 视频 Caption 等业务场景实现 1.2x ~1.34x 端到端吞吐提升}。
-  \item \textbf{Eagle3 Hidden States 导出链路}：复用 speculative decoding 基础设施，设计 cache-only drafter 将目标模型多层 aux\_hidden\_states 按 token 级位置 scatter 写入 GPU paged KV cache，打通 GPUModelRunner 到 KV Connector 的完整中间表征导出管线。
+  \item \textbf{INT8 Blockwise W8A8 量化推理优化}（专利成果）\textbar{} 背景：LLM 推理中 INT8 量化是降低显存、提升吞吐的关键手段，但 Ampere 硬件上量化算子频繁执行数值转换严重影响性能。核心主导该方案从算法设计到端到端集成的全栈开发，代码量 $\sim$7200 行（CUDA 2200+，Triton/Python 3500+）。提出 Hybrid 二级 Scale 量化方案，将 FP32 scale 分解为 (Q\_int32, F\_fp32) 实现 K-Tile 维度连续 INT32 累加，消除 mainloop 中全部浮点指令；基于 CUTLASS 开发 3 种 CTA Tile 配置的 GEMM kernel 并实现 CTA Swizzle 优化 L2 缓存命中率；设计三级融合策略将激活在线量化的多步算子垂直融合为单 kernel。\textbf{Tensor Core 利用率从 48\% 提升至 65\%，算子时延降低 1.23x\textasciitilde 1.47x，Qwen3-8B 端到端 QPS 相比 BF16 提升 1.67x\textasciitilde 2.24x}。
+
+  \item \textbf{Async N-gram GPU 投机解码}（PR \#29184 合入 vLLM 主线）\textbar{} 背景：vLLM 异步调度器通过重叠 CPU/GPU 提升吞吐，但 N-gram 投机解码依赖 CPU 逐 token 采样，每步需 CPU-GPU 同步成为瓶颈。作为项目 owner 将 N-gram Proposer 完全迁移至 GPU，利用 Torch 向量化操作将 CPU O(N) 查找优化为滑动窗口 O(1) 并行匹配；实现异步 D2H、Pinned Memory 复用、独立 CUDA Stream 等零同步设计，解除 CPU-GPU 同步阻塞。\textbf{H20 上 64\textasciitilde 512 并发吞吐提升 20\%\textasciitilde 39\%}。
+
+  \item \textbf{DivPrune 视觉 Token 剪枝}\textbar{} 背景：多模态模型处理视频流时 encoder 阶段 vision token 过多导致显存与计算瓶颈。在 Qwen3-VL 中设计并实现基于最远点采样（Farthest-Point Sampling）的特征多样性剪枝方法，采用批量并行选取（parallel\_k=32）+ mRoPE 3D 位置编码附加方案，实现 EVS/DivPrune/关闭三种模式无缝切换，保持完全向后兼容。\textbf{Qwen3-VL 视频 Caption 等业务场景端到端吞吐提升 1.2x\textasciitilde 1.34x}。
+
+  \item \textbf{Penalty-Aware Speculative Decoding}\textbar{} 背景：Speculative Decoding 中多 draft token 并行采样时，frequency/presence penalty 无法感知同批次更早位置的 token，导致计算错误。设计增量计数机制，在 Triton kernel 中以 BLOCK\_SIZE 粒度向量化匹配 vocab ID 并动态累加前置 draft token 出现次数；利用 tl.static\_range 编译期循环展开避免动态循环开销。\textbf{修正多 draft token 并行采样时的惩罚计算错误，保证生成约束正确性，性能开销可控}。
 \end{itemize}
 
 \section{实习经历}
 
 \datedsubsection{\textbf{微软} | Bing Core Search, 推理引擎性能优化工程师}{2023.10 - 2024.12}
 \begin{itemize}
-  \item \textbf{KV Cache 压缩优化}：基于注意力分数实现 KV Cache 压缩，使用 Triton 实现 Prefill 阶段 Block-Sparse Attention，编写 CUDA 内存搬运函数结合 vLLM CacheEngine 实现动态压缩存储，\textbf{达到 60\% 压缩率，4x kernel 加速比}，A100 上 LlaMa-7B P95 时延从 9.8s 优化到 6.3s；
-  \item \textbf{Online TopK 算子融合}：使用 CUTLASS \& CuTe 框架，运用 Tensor Core、异步 IO、并行 Bitonic TopK 实现张量点积与 TopK 算子垂直融合，\textbf{时延从 30ms 压缩至 11ms（3x 加速比）}
-  \item \textbf{Labeling 模型量化部署}：SmoothQuant 优化 compute-bound 场景 + GPTQ 优化 memory-bound 场景，\textbf{P95 延迟从 6.7s 降至 4.4s}
-  \item \textbf{搜索排序模型优化}：BERT 蒸馏训练引入 RoPE，使用 DeepSpeed ZeRO-2 + FP16 在 8xA100 上训练，\textbf{达到基线 8x 训练速度}
-\end{itemize}
-
-\section{项目经历}
-
-\datedsubsection{\textbf{基于 RAG 的大语言模型私人知识库机器人}}{2023.12 - 2024.03}
-\begin{itemize}
-  \item 使用 AutoGPTQ 对 Llama-2-7B 进行 4bit 量化 + vLLM 推理；使用 Sentence-Transformer 微调 BGE 嵌入模型增强上下文感知能力，\textbf{IR 质量提升 10\%}；基于随机森林的 Query 分类重排序，\textbf{回答质量提升 24\%}
-\end{itemize}
-
-\datedsubsection{\textbf{基于 VGG19 的神经网络训练及寒武纪 MLU 算子实现}}{2023.04 - 2023.05}
-\begin{itemize}
-  \item 基于 VGG19 搭建图像风格迁移网络；使用寒武纪 MLU SIMD 函数实现 SoftMax、矩阵乘等算子，实现双流水线并行并融合进 TensorFlow 计算图，\textbf{加速比达 2.4x}
+  \item \textbf{KV Cache 压缩优化}\textbar{} 背景：LLM 推理中 KV Cache 显存占用随序列长度线性增长，成为长文本推理瓶颈。基于注意力分数实现 KV Cache 压缩，使用 Triton 编写 Prefill 阶段 Block-Sparse Attention kernel，结合 CUDA 内存搬运函数与 vLLM CacheEngine 实现动态压缩存储。\textbf{达到 60\% 压缩率，4x kernel 加速比，A100 上 LlaMa-7B P95 时延从 9.8s 优化到 6.3s}。
+  \item \textbf{Online TopK 算子融合}\textbar{} 背景：搜索排序模型中张量点积与 TopK 分步执行带来额外 kernel launch 与显存搬运开销。使用 CUTLASS \& CuTe 框架，运用 Tensor Core、异步 IO、并行 Bitonic TopK 实现张量点积与 TopK 算子垂直融合。\textbf{时延从 30ms 压缩至 11ms（3x 加速比）}。
+  \item \textbf{Labeling 模型量化部署}\textbar{} 背景：Labeling 模型在线推理延迟过高影响搜索服务质量。针对 compute-bound 场景采用 SmoothQuant、memory-bound 场景采用 GPTQ 量化部署。\textbf{P95 延迟从 6.7s 降至 4.4s}。
+  \item \textbf{搜索排序模型优化}\textbar{} 背景：BERT 排序模型训练效率低制约迭代速度。引入 RoPE 位置编码蒸馏训练，使用 DeepSpeed ZeRO-2 + FP16 在 8xA100 上训练。\textbf{达到基线 8x 训练速度}。
 \end{itemize}
 
 \section{开源贡献}
 \begin{itemize}[parsep=0.2ex]
-  \item \textbf{vLLM 核心贡献者}：多项 PR 合入主线，涵盖 INT8 量化推理、投机解码 GPU 化、视觉 Token 剪枝、Hidden States 导出等方向
+  \item \textbf{vLLM 核心贡献者}：多项 PR 合入主线，涵盖 INT8 量化推理、投机解码 GPU 化、视觉 Token 剪枝、Penalty-Aware 采样修正、Eagle3 Hidden States 导出等方向
   \item GitHub: \textit{https://github.com/PatchouliTIS}
 \end{itemize}
 
