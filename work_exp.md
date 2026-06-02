@@ -386,3 +386,202 @@
     支持 dummy_run、CUDA Graph、DP 对齐、KV cache 绑定与 connector 回调等运行时能力，提升该特性在 vLLM 推理框架中的可集成性与工程稳定性。
     基于 ExampleHiddenStatesConnector 完成 hidden states 导出链路验证，实现从 GPU KV cache 到外部存储/下游系统的中间表征抽取能力，为外部推理基础设施、特征复用及后续 rollout 场景预留扩展接口。
     ```
+
+
+
+## Eagle3 Training Framework supports (on vllm/speculators)
+一、Qwen3.6 Hybrid Attention 结构模型训练的关键修改
+1. Rotary Position Embedding (RoPE) 适配 （Commit 735236f）
+核心问题：Qwen3.6 使用 Hybrid Attention 结构，其中 partial_rotary_factor=0.25 表示只旋转每个注意力头前 25% 的维度。训练时使用的 HF 实现与推理时 vLLM 的旋转语义不一致，导致接受率下降 ~17%。
+
+解决方案：
+
+新增 _select_rotary_emb_class() 函数 (src/speculators/models/eagle3/core.py:72-149)：
+
+检测 draft config 是否包含 rope_parameters.mrope_section（MRoPE 元数据）
+若存在且 partial_rotary_factor < 1.0，则使用自定义的 PartialMRoPE 类
+否则回退到默认 rotary embedding 类
+新增 _make_partial_mrope_rotary_cls() 函数 (src/speculators/models/eagle3/core.py:152-218)：
+
+创建 Qwen3OmniMoeThinkerTextRotaryEmbedding 的子类
+重写 compute_default_rope_parameters() 使 inv_freq 只构建 rotary_dim // 2 个条目
+返回的 cos/sin 长度为 rotary_dim，Eagle3 注意力层负责切片 q/k 并应用 vLLM 兼容的部分旋转
+新增训练参数 (scripts/train.py)：
+
+--draft-rope-scaling: 覆盖 draft 的 rope_scaling 配置
+--draft-rope-theta: 覆盖 draft 的 rope_theta
+--draft-max-position-embeddings: 覆盖 draft 的 max_position_embeddings
+--draft-mrope-full-head-hack: 当 partial_rotary_factor < 1 时，将 draft 的 mrope_section 放大 1/partial_rotary_factor 倍并强制 partial_rotary_factor=1.0，使训练时的 rotate_half 与推理时的 neox 部分旋转逐位等价（默认开启）
+2. 损失函数改进 （Commit 735236f）
+新增 EAGLE3_LOSS_CE_WEIGHT 环境变量 (src/speculators/models/eagle3/core.py:23-69)：
+允许在 KL 散度损失中混合硬标签交叉熵损失
+num_speculative_tokens=1 时，强制 top-1 对齐比全分布匹配更高效
+实验表明 0.3-0.7 的混合比例可提升 1-2pp 的首位置准确率
+3. Transformers 5.x 兼容性 （Commit 735236f）
+新增 _patch_speculator_configs_for_transformers5() 函数 (scripts/train.py:47-136)：
+修复 SpeculatorModelConfig 多重继承（pydantic.BaseModel + PreTrainedConfig）在 transformers 5.x 下的 __init__ 冲突
+预填充 pydantic 私有槽，避免 setattr 在 pydantic 状态未初始化时失败
+二、多模态输入数据处理的修改
+1. MRoPE Position IDs 生成 （Commit 735236f）
+核心问题：Qwen3-Omni 和 Qwen3.5/3.6 MoE 的 config 布局不同，需要不同的 get_rope_index 绑定逻辑。
+
+解决方案：
+
+重写 _make_rope_index_fn() 函数 (src/speculators/train/data.py:159-215)：
+
+Dispatch 逻辑：根据 verifier config 的布局选择不同的实现
+嵌套布局（Qwen3-Omni Thinker）：thinker_config 存在 → 调用 _make_rope_index_fn_qwen3_omni()
+扁平布局（Qwen3.5/3.6 MoE）：vision_config + text_config + image_token_id 存在于顶层 → 调用 _make_rope_index_fn_qwen3_5_moe()
+否则返回 None（纯文本模型）
+新增 _make_rope_index_fn_qwen3_5_moe() 函数 (src/speculators/train/data.py:254-325)：
+
+Qwen3_5MoeModel.get_rope_index 的签名为 (input_ids, mm_token_type_ids, image_grid_thw, video_grid_thw, attention_mask)
+创建适配器：从 input_ids 构建 mm_token_type_ids（0=text, 1=image, 2=video）
+忽略 Qwen3-Omni 风格的音频 kwarg（use_audio_in_video, audio_seqlens 等）
+2. 损失掩码对齐优化 （Commit d834959）
+核心问题：多模态样本中，processor 会插入大量的 media placeholder token（如 image_pad * N），导致 tokenizer 生成的 assistant mask 位置偏移。
+
+解决方案：
+
+重写 _loss_mask_from_ids_fallback() 函数 (src/speculators/data_generation/preprocessing.py:600-650)：
+
+旧逻辑：简单左对齐 tokenizer mask 到 processor input_ids
+新逻辑：在 input_ids 的 placeholder token 位置插入 0，使 mask 与 processor tokenization 逐位对齐
+使用 torch.isin() 向量化检测 placeholder 位置
+新增 _loss_mask_from_assistant_token_spans() 函数 （Commit d834959）：
+
+从 chat template 的 assistant 消息 span 提取 token 级 mask
+作为 _loss_mask_from_ids_fallback() 的前置尝试
+优化 _build_multimodal_loss_mask() 函数 (src/speculators/data_generation/preprocessing.py:203-215)：
+
+使用 torch.isin() 向量化屏蔽所有 placeholder token 位置的损失
+3. 数据集加载修复 （Commit 735236f）
+修复 ArrowDataset.__init__() (src/speculators/train/data.py:334-343)：
+问题：prepare_data.py 调用 save_to_disk 时会将 set_format(type="torch", columns=["input_ids","loss_mask","seq_len"]) 持久化到 state.json，导致后续 load_from_disk 时多模态元数据列（mm_file, messages_json, use_audio_in_video）被隐藏
+解决：调用 self.data.with_format(None) 重置格式（O(1) 元数据操作，无 tensor 拷贝）
+4. 词汇表映射修复 （Commit 298fcee）
+修改 get_target_vocab_size() 函数 (src/speculators/train/vocab_mapping.py:111-121)：
+支持三种 config 布局：
+Qwen3-Omni-Thinking: top.thinker_config.text_config.vocab_size
+Qwen3-VL-MoE: top.text_config.vocab_size
+纯文本 LLM: top.vocab_size
+确保 prepare_data（vocab-mapping）和 train（transformer_layer_config.vocab_size）使用相同的整数
+三、总结表格
+修改类型	Commit	关键文件	核心改动
+Hybrid Attention 训练	735236f	eagle3/core.py	新增 PartialMRoPE 类，支持 partial_rotary_factor < 1 的部分旋转
+RoPE 配置覆盖	735236f	scripts/train.py	新增 --draft-rope-scaling/theta/max-position-embeddings 参数
+损失函数混合	735236f	eagle3/core.py	新增 EAGLE3_LOSS_CE_WEIGHT 环境变量，支持 KL+CE 混合损失
+MRoPE Position IDs	735236f	train/data.py	支持 Qwen3-Omni（嵌套）和 Qwen3.5/3.6（扁平）两种 config 布局
+损失掩码对齐	d834959	preprocessing.py	在 placeholder token 位置插入 0，使 tokenizer mask 与 processor tokenization 对齐
+数据集格式修复	735236f	train/data.py	重置 ArrowDataset 的 format，使多模态元数据列可访问
+词汇表映射	298fcee	train/vocab_mapping.py	支持多模态 verifier 的嵌套/扁平 text_config 布局
+这些修改的核心目标是：确保训练时（HF 实现）和推理时（vLLM 实现）的注意力计算逐位等价，特别是对于 Qwen3.6 的 Hybrid Attention 结构（partial_rotary_factor=0.25）和多模态 3D RoPE 编码。
+
+效果：  在 Qwen3.6-35B-A3B 的多模态 Caption 任务上，依托内部人工标注数据 from-scratch 训练 draft model， 首位 draft token 准确率达到 89%，在 batchsize 256 的并发上，端到端吞吐有 1.35x 的提升，优于原生  MTP 草稿模型。
+
+
+
+## INT8 Blockwise FusedMoE 算子优化
+  性能基线（优化前）
+
+  ┌───────────────────────┬────────┬────────┬────────┐
+  │         指标          │ DL mm1 │ DH mm1 │ PF mm1 │
+  ├───────────────────────┼────────┼────────┼────────┤
+  │ TensorCore IMMA利用率 │ 40.5%  │ 56.6%  │ 56.4%  │
+  ├───────────────────────┼────────┼────────┼────────┤
+  │ DRAM吞吐率            │ 75.0%  │ 45.0%  │ 34.0%  │
+  ├───────────────────────┼────────┼────────┼────────┤
+  │ 延迟 (ms)             │ 1.029  │ 1.788  │ 5.204  │
+  └───────────────────────┴────────┴────────┴────────┘
+
+  ---
+  P1-A — SiLU激活+量化融合
+
+  Situation: MoE层中SiLU(gate)×up激活后需独立kernel做INT8量化，产生额外DRAM往返
+
+  Task: 将SiLU+mul+quant融合为单一Triton kernel，减少launch overhead和DRAM带宽
+
+  Action: 编写_fused_silu_quant_int8_hybrid_grouped_kernel，kernel内完成silu_fp32→bf16→乘积→INT8量化全链路
+  代码位置: vllm/model_executor/layers/fused_moe/utils.py:577-678
+
+  Result: 默认开启（VLLM_INT8_HYBRID_FUSED_SILU_QUANT=1），消除一次独立CUDA launch和一次DRAM读写
+
+  ---
+  C2 — 编译时常量折叠消除除法链
+
+  Situation: NCU分析揭示mm1等待stall占52%，Top SASS PC是运行时除法链MUFU.RCP→IMAD.WIDE.U32→IMAD.HI.U32（line 402）。寄存器使用达254/255触碰sm_80硬上限
+
+  Task: 将运行时除法转为编译时常量，消除wait stall根源
+
+  Action:
+  1. kernel增加非类型模板参数kTilesPerQbCT ∈ {1,2,4}
+  2. host launcher增加switch dispatcher枚举值选择模板实例化
+  3. kTilesPerQbCT=1时，除法链被常量折叠完全消除
+
+  代码位置: int8_hybrid_grouped_gemm.cu:261-281（boundary check）、int8_hybrid_grouped_gemm.cu:422-446（dispatcher）
+
+  Result:
+  ┌───────────────────────┬─────────────────────┬─────────────────────┬─────────────────────┐
+  │         指标          │         DL          │         DH          │         PF          │
+  ├───────────────────────┼─────────────────────┼─────────────────────┼─────────────────────┤
+  │ 延迟变化              │ -2.4%               │ -9.5%               │ -10.6%              │
+  ├───────────────────────┼─────────────────────┼─────────────────────┼─────────────────────┤
+  │ TensorCore IMMA利用率 │ +9 pp（提升至~50%） │ +9 pp（提升至~66%） │ +9 pp（提升至~65%） │
+  ├───────────────────────┼─────────────────────┼─────────────────────┼─────────────────────┤
+  │ Wait stall            │ 29%→20%             │ 52%→38%             │ 53%→38%             │
+  ├───────────────────────┼─────────────────────┼─────────────────────┼─────────────────────┤
+  │ 寄存器                │ 166→168             │ 254→246             │ 254→246             │
+  └───────────────────────┴─────────────────────┴─────────────────────┴─────────────────────┘
+
+  cos-sim bit-identical，promoted
+
+  ---
+  C7 — Permute+Quant融合
+
+  Situation: NCU揭示decode-light场景host端开销占e2e的78%，(d) expandInputRowsKernel + (e) _grouped_blockwise_quant_int8_kernel是两个独立CUDA launch
+
+  Task: 将permute和INT8量化融合为单一Triton kernel，消除launch overhead
+
+  Action: 编写_fused_permute_quant_int8_kernel
+  代码位置: vllm/model_executor/layers/fused_moe/utils.py:372-556
+
+  Result:
+  ┌──────────────┬───────────────────────────┬────────┬────────────────────────┐
+  │     指标     │            DL             │   DH   │           PF           │
+  ├──────────────┼───────────────────────────┼────────┼────────────────────────┤
+  │ e2e延迟变化  │ -4.0%                     │ -8.3%  │ -16.2%                 │
+  ├──────────────┼───────────────────────────┼────────┼────────────────────────┤
+  │ 内核延迟变化 │ -14.3%                    │ -42.2% │ -55.2%                 │
+  ├──────────────┼───────────────────────────┼────────┼────────────────────────┤
+  │ SM吞吐率     │ 76.16%                    │ 62.85% │ 59.80%                 │
+  ├──────────────┼───────────────────────────┼────────┼────────────────────────┤
+  │ DRAM吞吐率   │ 0.91%                     │ 18.59% │ 33.13%                 │
+  ├──────────────┼───────────────────────────┼────────┼────────────────────────┤
+  │ L2命中率     │ 88.71%                    │ 88.32% │ 84.27%                 │
+  ├──────────────┼───────────────────────────┼────────┼────────────────────────┤
+  │ 主导stall    │ math_pipe_throttle 37.84% │ mixed  │ long_scoreboard 37.43% │
+  └──────────────┴───────────────────────────┴────────┴────────────────────────┘
+
+  重要发现：原计划要求DL DRAM SOL≥70%（误判为BW-bound），实际测量发现该kernel是L2-latency-bound而非HBM-BW-bound，L2高命中率(84-88%)已吸收gather请求，DRAM吞吐率仅0.91-33%是正常的。
+
+  cos-sim bit-identical，promoted
+
+  ---
+  综合成果
+
+  ┌───────────┬───────────────────────┬───────────────────┬─────────────────────────────┐
+  │ Candidate │ TensorCore IMMA利用率 │    DRAM吞吐率     │          延迟收益           │
+  ├───────────┼───────────────────────┼───────────────────┼─────────────────────────────┤
+  │ P1-A      │ —                     │ —                 │ 减少1次launch+DRAM往返      │
+  ├───────────┼───────────────────────┼───────────────────┼─────────────────────────────┤
+  │ C2        │ +9 pp（各shape）      │ 未退化            │ DH -9.5%, PF -10.6%         │
+  ├───────────┼───────────────────────┼───────────────────┼─────────────────────────────┤
+  │ C7        │ 非GEMM内核（无IMMA）  │ 0.91-33% (L2吸收) │ DL -4%, DH -8.3%, PF -16.2% │
+  └───────────┴───────────────────────┴───────────────────┴─────────────────────────────┘
+
+  三次迭代累计：
+  - DH: 1.788ms→1.519ms（-15%）
+  - PF: 5.204ms→7.980ms（注：PF原始数据有误，应为e2e下降）
+  - DL: 1.029ms→0.977ms（-5%）
+
+  均为bit-identical数值正确性。

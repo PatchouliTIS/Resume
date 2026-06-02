@@ -3,58 +3,96 @@
 % !Mode:: "TeX:UTF-8"
 
 \documentclass{resume}
-\usepackage{zh_CN-Adobefonts_external} % Simplified Chinese Support using external fonts (./fonts/zh_CN-Adobe/)
-%\usepackage{zh_CN-Adobefonts_internal} % Simplified Chinese Support using system fonts
+%\usepackage{zh_CN-Adobefonts_external} % Simplified Chinese Support using external fonts (./fonts/zh_CN-Adobe/)
+\usepackage{zh_CN-Adobefonts_internal} % Simplified Chinese Support using system fonts
 \usepackage{linespacing_fix} % disable extra space before next section
 \usepackage{cite}
+\usepackage{hyperref} % support \url command and make URLs clickable in PDF
 
 \begin{document}
 \pagenumbering{gobble} % suppress displaying page number
 
 \name{陈选安}
 
-\contactInfo{(+86) 178-2650-7955}{623894679@qq.com}{AI Infra / 推理引擎工程师}{GitHub @PatchouliTIS}
+\contactInfo{(+86) 178-2650-7955}{pyramkar@qq.com}{AI Infra / 推理引擎工程师}{\href{https://github.com/PatchouliTIS}{GitHub @PatchouliTIS}}
+
+\section{个人简介}
+从事大模型推理引擎优化，深耕推理框架（vLLM）与 GPU 算子开发（CUDA/CUTLASS/Triton），
+在量化推理、投机解码、多模态剪枝等方向有端到端落地经验，vLLM 核心 Feature 贡献者。
+
+\section{工作经历}
+\datedsubsection{\textbf{腾讯} | TEG 混元机器学习平台, 推理引擎工程师}{2025.06 - 2026.06}
+\begin{itemize}[parsep=0.2ex]
+  \item \textbf{INT8 Blockwise W8A8 量化推理优化} \textbar{} 全栈量化方案设计与落地 \\
+  针对 Ampere 架构 INT8 在线量化中 Tensor Core 利用率低（仅 44\%）的瓶颈，设计 Hybrid 二级 Scale 量化算法，
+  将 FP32 scale 分解为 (Q\_int32, F\_fp32)，使 GEMM 主循环全程保持 INT32 累加，仅在 Epilogue 做一次浮点转换；
+  基于 CUTLASS 开发多 Tile 配置 GEMM Kernel 并优化 L2 局部性，通过 Triton 实现激活量化前后算子垂直融合。
+  \textbf{Dense 算子端到端时延降低 69\%\textasciitilde117\%，Qwen3-8B QPS 提升 67\%\textasciitilde103\%；
+  MoE 算子时延降低 46\%\textasciitilde84\%，Qwen3.6-35B-A3B QPS 提升 38\%\textasciitilde423\%。}
+
+  \item \textbf{Async N-gram GPU 投机解码与 Penalty-Aware 采样修正} \textbar{} 消除 CPU-GPU 同步瓶颈与采样正确性保障 \\
+  针对 vLLM 异步调度下 N-gram 投机解码依赖 CPU KMP 算法导致 GPU 空泡的瓶颈，
+  将 N-gram Proposer 匹配算法用 GPU 向量化操作重构，时间复杂度从 $O(BN)$ 降至 $O(1)$，设计异步 D2H、独立 CUDA Stream 等零同步机制；
+  发现并修正投机解码中多 batch draft token 并行采样时 frequency/presence penalty 无法感知同批次前置 token 的计算错误；
+  设计增量计数机制并在 Triton kernel 中以 BLOCK\_SIZE 粒度向量化匹配，利用编译期循环展开消除动态开销。
+  \textbf{H20 上 64\textasciitilde512 并发吞吐提升 23\%\textasciitilde45\%；修正惩罚计算错误，保证生成约束正确性，性能开销可控。}
+
+  \item \textbf{Eagle3 投机解码训练框架适配} \textbar{} 多模态草稿模型训练与部署 \\
+  优化 Eagle3 speculators 训练框架对 Qwen3.6 Hybrid Attention 及多模态模型的适配；
+  设计 PartialMRoPE 使训练框架支持 partial\_rotary\_factor<1 的部分旋转与 MRoPE 3D 位置编码；
+  设计并实现针对 Caption 垂类任务的多端训练流程以及 KL+CE 混合损失函数以提升首位 draft token 准确率；
+  修复 speculators 训练框架中多模态数据预处理链路无法正确处理多模态 padding token 的问题，使训练器草稿模型能正确感知多模态数据。
+  \textbf{Qwen3.6-35B-A3B 多模态 Caption 任务首位 draft token 接受率 80\%，batchsize 256 端到端吞吐提升 1.37x，优于原生 MTP。}
+
+  \item \textbf{DivPrune 视觉 Token 剪枝} \textbar{} 多模态推理显存与计算优化 \\
+  针对多模态模型处理视频流时 vision token 过多导致的显存与计算瓶颈，设计基于最远点采样的特征多样性剪枝方法，
+  采用批量并行选取策略替代逐 Token 贪心，设计 MRoPE 3D 位置编码附加方案保证剪枝后位置信息可恢复，
+  通过 \texttt{--vision-pruning-method} 参数实现 EVS/DivPrune/关闭三种模式无缝切换并保持向后兼容。
+  \textbf{Qwen3-VL 视频 Caption 场景端到端吞吐提升 1.2x\textasciitilde1.34x。}
+\end{itemize}
+
+
+
+\section{实习经历}
+
+\datedsubsection{\textbf{微软} | Bing Core Search, 推理引擎性能优化工程师}{2023.10 - 2024.12}
+\begin{itemize}[parsep=0.2ex]
+  \item \textbf{KV Cache 压缩优化} \textbar{} 长文本推理显存优化 \\
+  针对 LLM 推理中 KV Cache 随序列长度线性增长的问题，基于注意力分数实现 KV Cache 压缩，
+  使用 Triton 编写 Prefill 阶段 Block-Sparse Attention kernel，结合 CUDA 内存搬运与 vLLM CacheEngine 实现动态压缩存储。
+  \textbf{达到 60\% 压缩率，4x kernel 加速比，A100 上 LlaMa-7B P95 时延从 9.8s 降至 6.3s。}
+
+  \item \textbf{Online TopK 算子融合} \textbar{} 搜索排序模型推理加速 \\
+  针对搜索排序模型中张量点积与 TopK 分步执行的额外开销，使用 CUTLASS \& CuTe 框架，
+  运用 Tensor Core、异步 IO、并行 Bitonic TopK 实现张量点积与 TopK 算子垂直融合。
+  \textbf{时延从 30ms 压缩至 11ms（3x 加速比）。}
+
+  \item \textbf{Labeling 模型量化部署} \textbar{} 在线推理延迟优化 \\
+  针对 Labeling 模型在线推理延迟过高的问题，根据场景特征差异化采用 SmoothQuant（compute-bound）与 GPTQ（memory-bound）量化部署。
+  \textbf{P95 延迟从 6.7s 降至 4.4s。}
+\end{itemize}
+
+\section{开源贡献}
+\begin{itemize}[parsep=0.2ex]
+  \item \textbf{vLLM 核心 Feature 贡献者}：作为 vLLM 核心贡献者，多项 PR 合入主线，涵盖投机解码、多模态模型支持、 Async Scheduling 等方向。
+  \item GitHub: \url{https://github.com/vllm-project/vllm/pulls?q=is%3Apr+author%3APatchouliTIS+is%3Aclosed}
+\end{itemize}
+\begin{itemize}[parsep=0.2ex]
+  \item \textbf{INT8 Blockwise W8A8 在线量化专利化}：INT8 Blockwise Dense/MoE 相关量化与算子融合方案已申请发明专利。
+  \item GitHub: \url{https://github.com/PatchouliTIS/INT8BlockwiseGEMM}
+\end{itemize}
+
 
 \section{教育背景}
 \datedsubsection{\textbf{中国科学技术大学},软件工程,\textit{硕士研究生}}{2022.09 - 2025.06}
-\ \textbf{GPA 3.4/4.3 (TOP 25\%)},研究生二等奖学金。主修：分布式系统与云计算、深度学习、机器学习
+\ \textbf{GPA 3.4/4.3},研究生二等奖学金。主修：分布式系统与云计算、深度学习、机器学习
 \datedsubsection{\textbf{长安大学},道路桥梁与渡河工程,\textit{工学学士}}{2015.09 - 2019.06}
 \ \textbf{GPA 3.7/5.0 (TOP 10\%)},院级一等奖学金。主修：C++程序设计、Python程序设计、数据结构
 
 \section{技术能力}
 \begin{itemize}[parsep=0.2ex]
-  \item \textbf{编程语言}: 熟悉 C++ 面向对象编程与现代 C++ 语言特性；熟悉 Python, Golang；熟悉 Linux 系统开发
-  \item \textbf{AI 推理优化}: 熟悉 PyTorch, TensorFlow；熟悉 vLLM, TensorRT-LLM 等大模型推理框架；拥有 CUDA/Triton/CUTLASS 算子开发经验，掌握张量并行、模型并行、序列并行等分布式训练概念；掌握常用的神经网络推理优化方法（量化、投机解码、算子融合等）
-  \item \textbf{工程组件}: 熟悉 Kafka, ElasticSearch, Docker, CMake, Git；了解 Kubernetes 基本概念
-\end{itemize}
-
-\section{工作经历}
-
-\datedsubsection{\textbf{腾讯} | TEG 混元机器学习平台, 推理引擎工程师}{2025.06 - 2026.04}
-\begin{itemize}
-  \item \textbf{INT8 Blockwise W8A8 量化推理优化}（专利成果）\textbar{} 背景：LLM 推理中 INT8 量化是降低显存、提升吞吐的关键手段，但 Ampere 硬件上量化算子频繁执行数值转换严重影响性能。核心主导该方案从算法设计到端到端集成的全栈开发，代码量 $\sim$7200 行（CUDA 2200+，Triton/Python 3500+）。提出 Hybrid 二级 Scale 量化方案，将 FP32 scale 分解为 (Q\_int32, F\_fp32) 实现 K-Tile 维度连续 INT32 累加，消除 mainloop 中全部浮点指令；基于 CUTLASS 开发 3 种 CTA Tile 配置的 GEMM kernel 并实现 CTA Swizzle 优化 L2 缓存命中率；设计三级融合策略将激活在线量化的多步算子垂直融合为单 kernel。\textbf{Tensor Core 利用率从 48\% 提升至 65\%，算子时延降低 1.23x\textasciitilde 1.47x，Qwen3-8B 端到端 QPS 相比 BF16 提升 1.67x\textasciitilde 2.24x}。
-
-  \item \textbf{Async N-gram GPU 投机解码}（PR \#29184 合入 vLLM 主线）\textbar{} 背景：vLLM 异步调度器通过重叠 CPU/GPU 提升吞吐，但 N-gram 投机解码依赖 CPU 逐 token 采样，每步需 CPU-GPU 同步成为瓶颈。作为项目 owner 将 N-gram Proposer 完全迁移至 GPU，利用 Torch 向量化操作将 CPU O(N) 查找优化为滑动窗口 O(1) 并行匹配；实现异步 D2H、Pinned Memory 复用、独立 CUDA Stream 等零同步设计，解除 CPU-GPU 同步阻塞。\textbf{H20 上 64\textasciitilde 512 并发吞吐提升 20\%\textasciitilde 39\%}。
-
-  \item \textbf{DivPrune 视觉 Token 剪枝}\textbar{} 背景：多模态模型处理视频流时 encoder 阶段 vision token 过多导致显存与计算瓶颈。在 Qwen3-VL 中设计并实现基于最远点采样（Farthest-Point Sampling）的特征多样性剪枝方法，采用批量并行选取（parallel\_k=32）+ mRoPE 3D 位置编码附加方案，实现 EVS/DivPrune/关闭三种模式无缝切换，保持完全向后兼容。\textbf{Qwen3-VL 视频 Caption 等业务场景端到端吞吐提升 1.2x\textasciitilde 1.34x}。
-
-  \item \textbf{Penalty-Aware Speculative Decoding}\textbar{} 背景：Speculative Decoding 中多 draft token 并行采样时，frequency/presence penalty 无法感知同批次更早位置的 token，导致计算错误。设计增量计数机制，在 Triton kernel 中以 BLOCK\_SIZE 粒度向量化匹配 vocab ID 并动态累加前置 draft token 出现次数；利用 tl.static\_range 编译期循环展开避免动态循环开销。\textbf{修正多 draft token 并行采样时的惩罚计算错误，保证生成约束正确性，性能开销可控}。
-\end{itemize}
-
-\section{实习经历}
-
-\datedsubsection{\textbf{微软} | Bing Core Search, 推理引擎性能优化工程师}{2023.10 - 2024.12}
-\begin{itemize}
-  \item \textbf{KV Cache 压缩优化}\textbar{} 背景：LLM 推理中 KV Cache 显存占用随序列长度线性增长，成为长文本推理瓶颈。基于注意力分数实现 KV Cache 压缩，使用 Triton 编写 Prefill 阶段 Block-Sparse Attention kernel，结合 CUDA 内存搬运函数与 vLLM CacheEngine 实现动态压缩存储。\textbf{达到 60\% 压缩率，4x kernel 加速比，A100 上 LlaMa-7B P95 时延从 9.8s 优化到 6.3s}。
-  \item \textbf{Online TopK 算子融合}\textbar{} 背景：搜索排序模型中张量点积与 TopK 分步执行带来额外 kernel launch 与显存搬运开销。使用 CUTLASS \& CuTe 框架，运用 Tensor Core、异步 IO、并行 Bitonic TopK 实现张量点积与 TopK 算子垂直融合。\textbf{时延从 30ms 压缩至 11ms（3x 加速比）}。
-  \item \textbf{Labeling 模型量化部署}\textbar{} 背景：Labeling 模型在线推理延迟过高影响搜索服务质量。针对 compute-bound 场景采用 SmoothQuant、memory-bound 场景采用 GPTQ 量化部署。\textbf{P95 延迟从 6.7s 降至 4.4s}。
-  \item \textbf{搜索排序模型优化}\textbar{} 背景：BERT 排序模型训练效率低制约迭代速度。引入 RoPE 位置编码蒸馏训练，使用 DeepSpeed ZeRO-2 + FP16 在 8xA100 上训练。\textbf{达到基线 8x 训练速度}。
-\end{itemize}
-
-\section{开源贡献}
-\begin{itemize}[parsep=0.2ex]
-  \item \textbf{vLLM 核心贡献者}：多项 PR 合入主线，涵盖 INT8 量化推理、投机解码 GPU 化、视觉 Token 剪枝、Penalty-Aware 采样修正、Eagle3 Hidden States 导出等方向
-  \item GitHub: \textit{https://github.com/PatchouliTIS}
+  \item \textbf{编程语言}: 熟悉 C++ 面向对象编程与现代 C++ 语言特性；熟悉 Python 编程；熟悉 Linux 系统开发
+  \item \textbf{AI 推理优化}: 熟悉 PyTorch；熟悉 vLLM, TensorRT-LLM 等大模型推理框架；拥有 CUDA/Triton/CUTLASS 算子开发经验，掌握张量并行、模型并行、序列并行等分布式训练概念；掌握常用的神经网络推理优化方法（量化、投机解码、算子融合等）
 \end{itemize}
 
 \end{document}
