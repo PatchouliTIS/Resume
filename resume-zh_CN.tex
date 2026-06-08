@@ -9,6 +9,10 @@
 \usepackage{cite}
 \usepackage{hyperref} % support \url command and make URLs clickable in PDF
 
+% Adjust line spacing for compact resume layout
+\setstretch{1.15} % Set global line spacing to 1.15x (compact but readable)
+\setlist[itemize]{itemsep=0.3ex, parsep=0.3ex, topsep=0.5ex} % Compact list spacing
+
 \begin{document}
 \pagenumbering{gobble} % suppress displaying page number
 
@@ -17,50 +21,56 @@
 \contactInfo{(+86) 178-2650-7955}{pyramkar@qq.com}{AI Infra / 推理引擎工程师}{\href{https://github.com/PatchouliTIS}{GitHub @PatchouliTIS}}
 
 \section{个人简介}
-从事大模型推理引擎优化，深耕推理框架（vLLM）与 GPU 算子开发（CUDA/CUTLASS/Triton），
-在量化推理、投机解码、多模态剪枝等方向有端到端落地经验，vLLM 核心 Feature 贡献者。
+从事大模型推理引擎优化，专注推理框架（vLLM）优化与 GPU 算子开发（CUDA/CUTLASS/Triton），
+在量化推理、投机解码、多模态剪枝等方向有端到端优化落地经验，支撑混元多模态以及语言模型千万级离线数据打标和在线推理业务， vLLM 核心 Feature 贡献者。
 
 \section{工作经历}
 \datedsubsection{\textbf{腾讯} | TEG 混元机器学习平台, 推理引擎工程师}{2025.06 - 2026.06}
 \begin{itemize}[parsep=0.2ex]
-  \item \textbf{INT8 Blockwise W8A8 量化推理优化} \textbar{} 全栈量化方案设计与落地 \\
-  针对 Ampere 架构 INT8 在线量化中 Tensor Core 利用率低（仅 44\%）的瓶颈，设计 Hybrid 二级 Scale 量化算法，
-  将 FP32 scale 分解为 (Q\_int32, F\_fp32)，使 GEMM 主循环全程保持 INT32 累加，仅在 Epilogue 做一次浮点转换；
-  基于 CUTLASS 开发多 Tile 配置 GEMM Kernel 并优化 L2 局部性，通过 Triton 实现激活量化前后算子垂直融合。
-  \textbf{Dense 算子端到端时延降低 69\%\textasciitilde117\%，Qwen3-8B QPS 提升 67\%\textasciitilde103\%；
-  MoE 算子时延降低 46\%\textasciitilde84\%，Qwen3.6-35B-A3B QPS 提升 38\%\textasciitilde423\%。}
+    \item \textbf{Eagle3 投机解码草稿模型训练} \textbar{} 多模态草稿模型训练与部署 \\
+  优化 Eagle3 speculators 训练框架对 Qwen3.6 Hybrid Attention 及多模态模型的适配；
+  设计 PartialMRoPE 使训练框架支持 partial\_rotary\_factor<1 的部分旋转与 MRoPE 3D 位置编码；
+  设计并实现针对图片 Caption 垂类任务的草稿模型训练流程；设计加权 KL+CE 混合损失函数，\textbf{首字接受率额外提升 9 pp}；
+  修复 speculators 训练框架中多模态数据预处理链路无法正确处理多模态 padding token 的问题，使训练器草稿模型能正确感知多模态数据。
+  \textbf{Qwen3.6-35B-A3B 多模态 Caption 任务首位 draft token 接受率 80\%，batchsize 256 端到端吞吐提升 1.37x，优于原生 MTP。}
 
-  \item \textbf{Async N-gram GPU 投机解码与 Penalty-Aware 采样修正} \textbar{} 消除 CPU-GPU 同步瓶颈与采样正确性保障 \\
+  \item \textbf{Async N-gram GPU 投机解码} \textbar{} 消除投机解码流程中 CPU-GPU 同步瓶颈 \\
   针对 vLLM 异步调度下 N-gram 投机解码依赖 CPU KMP 算法导致 GPU 空泡的瓶颈，
-  将 N-gram Proposer 匹配算法用 GPU 向量化操作重构，时间复杂度从 $O(BN)$ 降至 $O(1)$，设计异步 D2H、独立 CUDA Stream 等零同步机制；
+  将 N-gram Proposer 匹配算法用 GPU 向量化操作重构，时间复杂度从 $O(BN)$ 降至 $O(1)$；设计并实现纯 GPU 侧 metadata 更新逻辑以减少 CPU 同步开销；
   发现并修正投机解码中多 batch draft token 并行采样时 frequency/presence penalty 无法感知同批次前置 token 的计算错误；
   设计增量计数机制并在 Triton kernel 中以 BLOCK\_SIZE 粒度向量化匹配，利用编译期循环展开消除动态开销。
   \textbf{H20 上 64\textasciitilde512 并发吞吐提升 23\%\textasciitilde45\%；修正惩罚计算错误，保证生成约束正确性，性能开销可控。}
 
-  \item \textbf{Eagle3 投机解码训练框架适配} \textbar{} 多模态草稿模型训练与部署 \\
-  优化 Eagle3 speculators 训练框架对 Qwen3.6 Hybrid Attention 及多模态模型的适配；
-  设计 PartialMRoPE 使训练框架支持 partial\_rotary\_factor<1 的部分旋转与 MRoPE 3D 位置编码；
-  设计并实现针对 Caption 垂类任务的多端训练流程以及 KL+CE 混合损失函数以提升首位 draft token 准确率；
-  修复 speculators 训练框架中多模态数据预处理链路无法正确处理多模态 padding token 的问题，使训练器草稿模型能正确感知多模态数据。
-  \textbf{Qwen3.6-35B-A3B 多模态 Caption 任务首位 draft token 接受率 80\%，batchsize 256 端到端吞吐提升 1.37x，优于原生 MTP。}
+  \item \textbf{INT8 Blockwise W8A8 在线量化推理优化} \textbar{} 全栈量化方案设计与落地 \\
+  针对 Ampere 架构 INT8 在线量化中 Tensor Core 利用率低（仅 44\%）的瓶颈，设计 Hybrid 二级 Scale 量化算法，
+  将 FP32 scale 分解为 (Q\_int32, F\_fp32)，使 GEMM 主循环全程保持 INT32 累加，仅在 Epilogue 做一次浮点转换，\textbf{TensorCore 利用率从原始 44\%提升至 57\%\textasciitilde65\%}；
+  基于 CUTLASS 开发多 Tile 配置 GEMM Kernel ；手动 overlap 地址计算与 IMMA 计算；优化 L2 局部性；通过 Triton 实现激活量化前后算子垂直融合。
+  \textbf{Dense 算子端到端时延降低 69\%\textasciitilde117\%，Qwen3-8B QPS 提升 67\%\textasciitilde103\%；
+  MoE 算子时延降低 46\%\textasciitilde84\%，Qwen3.6-35B-A3B QPS 提升 38\%\textasciitilde423\%。}
 
   \item \textbf{DivPrune 视觉 Token 剪枝} \textbar{} 多模态推理显存与计算优化 \\
-  针对多模态模型处理视频流时 vision token 过多导致的显存与计算瓶颈，设计基于最远点采样的特征多样性剪枝方法，
-  采用批量并行选取策略替代逐 Token 贪心，设计 MRoPE 3D 位置编码附加方案保证剪枝后位置信息可恢复，
-  通过 \texttt{--vision-pruning-method} 参数实现 EVS/DivPrune/关闭三种模式无缝切换并保持向后兼容。
+  针对多模态模型处理视频流时 vision token 过多导致的显存与计算瓶颈，设计基于最远点采样的特征多样性剪枝方法；
+  采用批量并行选取策略替代逐 Token 贪心，设计 MRoPE 3D 位置编码附加方案保证剪枝后文本 token 位置信息可恢复；
+  引入可配置的 Micro-Batch 机制，解决了 Scheduler 按剪枝后 Token 数估算显存导致视觉编码器 OOM 的问题。
   \textbf{Qwen3-VL 视频 Caption 场景端到端吞吐提升 1.2x\textasciitilde1.34x。}
+
+  \item \textbf{多模态高吞吐结构化抽取} \textbar{} Train-Aligned One-Prefill 架构 \\
+  提出 Train-Aligned One-Prefill 框架，基于 Qwen3.6-35B-A3B 语音分类任务优化，外挂极轻量级 SlotClassifier 分类头，提取因果隐状态 $h_d = H[p_{d-1}]$ 进行分类，消除训练-推理分布偏移与词表先验偏差；
+  引入 valid\_mask 机制结合 torch.einsum 与 torch.gather，摒弃循环 Linear Head 设计，实现全维度 Logits 向量化计算；
+  设计逆词频平方根归一化权重与信息熵维度权重解决长尾类别坍塌，定制 Masked Label Smoothing 规避 $-\infty$ 计算的 NaN 陷阱；
+  搭建 Teacher-Student 蒸馏 Pipeline，以高精度自回归模型为 Teacher 提供软标签，通过 $L_{KD}$ 引导分类头训练，还原语义理解能力。
+  \textbf{移除自回归解码，推理吞吐提升 2.17 倍，12 维属性平均准确率提升 23\%。}
+
 \end{itemize}
-
-
 
 \section{实习经历}
 
 \datedsubsection{\textbf{微软} | Bing Core Search, 推理引擎性能优化工程师}{2023.10 - 2024.12}
 \begin{itemize}[parsep=0.2ex]
-  \item \textbf{KV Cache 压缩优化} \textbar{} 长文本推理显存优化 \\
-  针对 LLM 推理中 KV Cache 随序列长度线性增长的问题，基于注意力分数实现 KV Cache 压缩，
+  \item \textbf{在线稀疏注意力优化} \textbar{} 长文本推理优化 \\
+  针对超长上下文（40k input tokens）推理中，注意力模块耗时随着 sequence 纬度指数级增长的痛点，基于 QK 注意力分数实现在线的块状稀疏注意力，
   使用 Triton 编写 Prefill 阶段 Block-Sparse Attention kernel，结合 CUDA 内存搬运与 vLLM CacheEngine 实现动态压缩存储。
-  \textbf{达到 60\% 压缩率，4x kernel 加速比，A100 上 LlaMa-7B P95 时延从 9.8s 降至 6.3s。}
+  \textbf{在 40k 上下文推理中达到 67\% 压缩率，4x kernel 加速比，A100 上 LlaMa-7B P95 时延从 9.8s 降至 6.3s。}
 
   \item \textbf{Online TopK 算子融合} \textbar{} 搜索排序模型推理加速 \\
   针对搜索排序模型中张量点积与 TopK 分步执行的额外开销，使用 CUTLASS \& CuTe 框架，
@@ -86,8 +96,6 @@
 \section{教育背景}
 \datedsubsection{\textbf{中国科学技术大学},软件工程,\textit{硕士研究生}}{2022.09 - 2025.06}
 \ \textbf{GPA 3.4/4.3},研究生二等奖学金。主修：分布式系统与云计算、深度学习、机器学习
-\datedsubsection{\textbf{长安大学},道路桥梁与渡河工程,\textit{工学学士}}{2015.09 - 2019.06}
-\ \textbf{GPA 3.7/5.0 (TOP 10\%)},院级一等奖学金。主修：C++程序设计、Python程序设计、数据结构
 
 \section{技术能力}
 \begin{itemize}[parsep=0.2ex]

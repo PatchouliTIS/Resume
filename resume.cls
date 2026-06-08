@@ -27,7 +27,7 @@
 
 \RequirePackage[
 	paperwidth=210mm,
-	paperheight=400mm,
+	paperheight=500mm,
 	left=0.7in,
 	right=0.7in,
 	top=0.50in,
