@@ -30,7 +30,7 @@
     \item \textbf{Eagle3 投机解码草稿模型训练} \textbar{} 多模态草稿模型训练与部署 \\
   优化 Eagle3 speculators 训练框架对 Qwen3.6 Hybrid Attention 及多模态模型的适配；
   设计 PartialMRoPE 使训练框架支持 partial\_rotary\_factor<1 的部分旋转与 MRoPE 3D 位置编码；
-  设计并实现针对图片 Caption 垂类任务的草稿模型训练流程；设计加权 KL+CE 混合损失函数，\textbf{首字接受率额外提升 9 pp}；
+  设计并实现针对图片 Caption 垂类任务的草稿模型训练流程；设计加权 KL+CE 混合损失函数，\textbf{首字接受率额外提升 9 \%\textasciitilde10\%}；
   修复 speculators 训练框架中多模态数据预处理链路无法正确处理多模态 padding token 的问题，使训练器草稿模型能正确感知多模态数据。
   \textbf{Qwen3.6-35B-A3B 多模态 Caption 任务首位 draft token 接受率 80\%，batchsize 256 端到端吞吐提升 1.37x，优于原生 MTP。}
 
@@ -57,7 +57,7 @@
   \item \textbf{多模态高吞吐结构化抽取} \textbar{} Train-Aligned One-Prefill 架构 \\
   提出 Train-Aligned One-Prefill 框架，基于 Qwen3.6-35B-A3B 语音分类任务优化，外挂极轻量级 SlotClassifier 分类头，提取因果隐状态 $h_d = H[p_{d-1}]$ 进行分类，消除训练-推理分布偏移与词表先验偏差；
   引入 valid\_mask 机制结合 torch.einsum 与 torch.gather，摒弃循环 Linear Head 设计，实现全维度 Logits 向量化计算；
-  设计逆词频平方根归一化权重与信息熵维度权重解决长尾类别坍塌，定制 Masked Label Smoothing 规避 $-\infty$ 计算的 NaN 陷阱；
+  设计逆词频平方根归一化权重与信息熵维度权重解决长尾类别坍塌，定制 Masked Label Smoothing 规避损失函数计算时因 mask 引起的 NaN 陷阱；
   搭建 Teacher-Student 蒸馏 Pipeline，以高精度自回归模型为 Teacher 提供软标签，通过 $L_{KD}$ 引导分类头训练，还原语义理解能力。
   \textbf{移除自回归解码，推理吞吐提升 2.17 倍，12 维属性平均准确率提升 23\%。}
 
